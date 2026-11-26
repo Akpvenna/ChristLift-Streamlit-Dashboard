@@ -350,7 +350,8 @@ def render_overview():
             """,
             unsafe_allow_html=True
         )
-        fig_heat = build_weekday_hour_heatmap(filtered_df if not filtered_df.empty else df)
+        heatmap_df = df if selected_block == "All Blocks" else df[df["Block"] == selected_block]
+        fig_heat = build_weekday_hour_heatmap(heatmap_df if not heatmap_df.empty else df)
         st.plotly_chart(fig_heat, **WIDTH_STRETCH, config=CHART_CONFIG)
 
     st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
@@ -409,11 +410,13 @@ def render_overview():
                 if len(trend) < 2:
                     trend = [base_l, base_l]
 
+                fl = int(lift["Current_Floor"])
+                fl_str = "B1" if fl == -1 else ("Ground" if fl == 0 else f"Floor {fl}")
                 table_rows.append({
                     "Lift ID": f"{lift['Block'][:7]} - {lift['Lift_ID']}",
                     "Block": lift["Block"],
                     "Status": lift["Operational_Status"],
-                    "Current Floor": f"Floor {lift['Current_Floor']}",
+                    "Current Floor": fl_str,
                     "Avg Load": f"{lift['Passenger_Load_Percent']}%",
                     "Load Trend": trend,
                     "Health Score": int(lift["Health_Score"]),

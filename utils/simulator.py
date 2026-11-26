@@ -2,7 +2,7 @@
 ChristLift Simulator Engine
 Handles 7-day auto-seeding of lift_logs.csv across 6 campus buildings (24 lifts total),
 in-memory elevator state transitions respecting each building's floor count,
-live tick appending, and VIVA fault injection utilities.
+live tick appending, and fault injection utilities.
 """
 
 import os
@@ -15,12 +15,12 @@ CSV_FILE = "lift_logs.csv"
 
 # Exact Campus Building Specifications (24 Lifts Total)
 BUILDING_CONFIG = {
-    "Central Block": {"lifts": 10, "max_floor": 10},
-    "R&D Block": {"lifts": 4, "max_floor": 8},
-    "Block II": {"lifts": 2, "max_floor": 10},
-    "Main Auditorium": {"lifts": 4, "max_floor": 5},
-    "Block I": {"lifts": 2, "max_floor": 8},
-    "Block IV": {"lifts": 2, "max_floor": 8},
+    "Central Block": {"lifts": 10, "min_floor": 0, "max_floor": 10},
+    "R&D Block": {"lifts": 4, "min_floor": 0, "max_floor": 8},
+    "Block II": {"lifts": 2, "min_floor": 0, "max_floor": 4},
+    "Main Auditorium": {"lifts": 4, "min_floor": -1, "max_floor": 6},
+    "Block I": {"lifts": 2, "min_floor": 0, "max_floor": 3},
+    "Block IV": {"lifts": 2, "min_floor": 0, "max_floor": 8},
 }
 
 BLOCKS = list(BUILDING_CONFIG.keys())
@@ -30,6 +30,11 @@ def get_lifts_for_block(block):
     """Returns the exact list of Lift IDs for a given campus block."""
     count = BUILDING_CONFIG.get(block, {}).get("lifts", 4)
     return [f"Lift {i}" for i in range(1, count + 1)]
+
+
+def get_min_floor(block):
+    """Returns the lowest floor number (e.g. -1 for Basement, 0 for Ground) for a given campus block."""
+    return BUILDING_CONFIG.get(block, {}).get("min_floor", 0)
 
 
 def get_max_floor(block):
@@ -42,10 +47,12 @@ def build_default_fleet():
     fleet = []
     rng = random.Random(42)
     for block, cfg in BUILDING_CONFIG.items():
+        min_fl = cfg["min_floor"]
         max_fl = cfg["max_floor"]
+        mid_fl = (min_fl + max_fl) // 2
         for i in range(1, cfg["lifts"] + 1):
-            floor = rng.randint(0, max_fl)
-            if floor == 0:
+            floor = rng.randint(min_fl, max_fl)
+            if floor == min_fl:
                 direction = "Going Up"
             elif floor == max_fl:
                 direction = "Going Down"
@@ -54,7 +61,7 @@ def build_default_fleet():
 
             load = rng.randint(15, 78) if direction != "Idle" else rng.randint(0, 25)
             health = rng.randint(86, 99)
-            wait_sec = max(15, 20 + abs(floor - (max_fl // 2)) * 6 + int(load * 0.4))
+            wait_sec = max(15, 20 + abs(floor - mid_fl) * 6 + int(load * 0.4))
             energy = round(0.12 * (1 + load / 100), 2)
 
             fleet.append({
@@ -67,26 +74,28 @@ def build_default_fleet():
                 "Energy_kWh": energy,
                 "Health_Score": health,
                 "Operational_Status": "Operational",
+                "Min_Floor": min_fl,
                 "Max_Floor": max_fl,
             })
     return fleet
 
 
 def seed_historical_logs(days=7):
-    """Generates 7 days of synthetic campus telemetry for all 24 lifts if lift_logs.csv is missing or outdated."""
+    """Generates 7 days of synthetic campus telemetry up to now (15-min density for last 24h)."""
+    now = datetime.datetime.now()
     if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 10000:
         try:
-            sample_df = pd.read_csv(CSV_FILE, usecols=["Block", "Lift_ID", "Timestamp"])
+            sample_df = pd.read_csv(CSV_FILE, usecols=["Block", "Timestamp"])
             required_blocks = set(BLOCKS)
             present_blocks = set(sample_df["Block"].dropna().unique())
-            if required_blocks.issubset(present_blocks):
+            latest_ts = pd.to_datetime(sample_df["Timestamp"], format="mixed", errors="coerce").max()
+            if required_blocks.issubset(present_blocks) and pd.notna(latest_ts) and (now - latest_ts).total_seconds() < 7200:
                 return
         except Exception:
             pass
 
     records = []
-    now = datetime.datetime.now()
-    start_date = now - datetime.timedelta(days=days)
+    start_date = (now - datetime.timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
 
     block_multipliers = {
         "Central Block": 1.08,
@@ -97,72 +106,80 @@ def seed_historical_logs(days=7):
         "Block IV": 0.88,
     }
 
-    for d in range(days):
-        current_day = start_date + datetime.timedelta(days=d)
-        is_weekend = current_day.weekday() >= 5
+    # Generate timestamps: hourly for days 0..days-2, and every 15 mins for the last 24 hours up to now
+    timestamps = []
+    cutoff_24h = now - datetime.timedelta(hours=24)
+    cur = start_date
+    while cur <= now:
+        timestamps.append(cur)
+        cur += datetime.timedelta(minutes=15 if cur >= cutoff_24h else 60)
 
-        for hour in range(24):
-            ts = current_day.replace(hour=hour, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+    for cur_dt in timestamps:
+        is_weekend = cur_dt.weekday() >= 5
+        hour = cur_dt.hour
+        ts = cur_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-            if 8 <= hour <= 9:
-                base_min, base_max = (40, 70) if is_weekend else (70, 96)
-            elif 12 <= hour <= 13:
-                base_min, base_max = (35, 65) if is_weekend else (65, 92)
-            elif 16 <= hour <= 17:
-                base_min, base_max = (40, 65) if is_weekend else (70, 95)
-            elif 10 <= hour <= 15:
-                base_min, base_max = (20, 50) if is_weekend else (30, 65)
-            elif 18 <= hour <= 21:
-                base_min, base_max = (15, 40) if is_weekend else (25, 55)
-            else:
-                base_min, base_max = (0, 15)
+        if 8 <= hour <= 9:
+            base_min, base_max = (40, 70) if is_weekend else (70, 96)
+        elif 12 <= hour <= 13:
+            base_min, base_max = (35, 65) if is_weekend else (65, 92)
+        elif 16 <= hour <= 17:
+            base_min, base_max = (40, 65) if is_weekend else (70, 95)
+        elif 10 <= hour <= 15:
+            base_min, base_max = (20, 50) if is_weekend else (30, 65)
+        elif 18 <= hour <= 21:
+            base_min, base_max = (15, 40) if is_weekend else (25, 55)
+        else:
+            base_min, base_max = (0, 15)
 
-            for block, cfg in BUILDING_CONFIG.items():
-                max_fl = cfg["max_floor"]
-                mult = block_multipliers.get(block, 1.0)
+        for block, cfg in BUILDING_CONFIG.items():
+            min_fl = cfg["min_floor"]
+            max_fl = cfg["max_floor"]
+            mid_fl = (min_fl + max_fl) // 2
+            mult = block_multipliers.get(block, 1.0)
 
-                for i in range(1, cfg["lifts"] + 1):
-                    lift_id = f"Lift {i}"
-                    load = int(min(100, max(0, random.randint(base_min, base_max) * mult)))
-                    floor = random.randint(0, max_fl)
+            for i in range(1, cfg["lifts"] + 1):
+                lift_id = f"Lift {i}"
+                load = int(min(100, max(0, random.randint(base_min, base_max) * mult)))
+                floor = random.randint(min_fl, max_fl)
 
-                    if load == 0:
-                        direction = "Idle"
-                    elif floor == 0:
-                        direction = "Going Up"
-                    elif floor == max_fl:
-                        direction = "Going Down"
-                    else:
-                        direction = random.choice(["Going Up", "Going Down", "Idle"])
+                if load == 0:
+                    direction = "Idle"
+                elif floor == min_fl:
+                    direction = "Going Up"
+                elif floor == max_fl:
+                    direction = "Going Down"
+                else:
+                    direction = random.choice(["Going Up", "Going Down", "Idle"])
 
-                    wait_sec = max(15, min(180, int(18 + abs(floor - (max_fl // 2)) * 7 + (load * 0.45) + random.randint(-4, 6))))
-                    energy = round(random.uniform(0.08, 0.32) * (1 + load / 100), 2)
-                    health = max(40, min(100, int(98 - random.uniform(0, 8))))
+                wait_sec = max(15, min(180, int(18 + abs(floor - mid_fl) * 7 + (load * 0.45) + random.randint(-4, 6))))
+                energy = round(random.uniform(0.08, 0.32) * (1 + load / 100), 2)
+                health = max(40, min(100, int(98 - random.uniform(0, 8))))
 
-                    if load >= 85:
-                        status = "High Load"
-                        health = min(health, 82)
-                    elif random.random() < 0.015:
-                        status = "Temporary Delay"
-                        health = min(health, 75)
-                    elif random.random() < 0.005:
-                        status = "Maintenance"
-                        health = min(health, 55)
-                    else:
-                        status = "Operational"
+                if load >= 85:
+                    status = "High Load"
+                    health = min(health, 82)
+                elif random.random() < 0.015:
+                    status = "Temporary Delay"
+                    health = min(health, 75)
+                elif random.random() < 0.005:
+                    status = "Maintenance"
+                    health = min(health, 55)
+                else:
+                    status = "Operational"
 
-                    records.append({
-                        "Timestamp": ts,
-                        "Block": block,
-                        "Lift_ID": lift_id,
-                        "Current_Floor": floor,
-                        "Direction": direction,
-                        "Passenger_Load_Percent": load,
-                        "Est_Wait_Sec": wait_sec,
-                        "Energy_kWh": energy,
-                        "Health_Score": health,
-                        "Operational_Status": status
-                    })
+                records.append({
+                    "Timestamp": ts,
+                    "Block": block,
+                    "Lift_ID": lift_id,
+                    "Current_Floor": floor,
+                    "Direction": direction,
+                    "Passenger_Load_Percent": load,
+                    "Est_Wait_Sec": wait_sec,
+                    "Energy_kWh": energy,
+                    "Health_Score": health,
+                    "Operational_Status": status
+                })
 
     df = pd.DataFrame(records)
     df.to_csv(CSV_FILE, index=False)
@@ -207,7 +224,9 @@ def simulate_tick():
         cur_dir = lift["Direction"]
         cur_load = int(lift["Passenger_Load_Percent"])
         cur_health = int(lift["Health_Score"])
+        min_fl = int(lift.get("Min_Floor", get_min_floor(lift["Block"])))
         max_fl = int(lift.get("Max_Floor", get_max_floor(lift["Block"])))
+        mid_fl = (min_fl + max_fl) // 2
 
         if cur_status == "Maintenance":
             if random.random() < 0.15:
@@ -220,7 +239,7 @@ def simulate_tick():
 
         if cur_dir == "Idle":
             if random.random() < 0.40:
-                if cur_floor <= 0:
+                if cur_floor <= min_fl:
                     lift["Direction"] = "Going Up"
                 elif cur_floor >= max_fl:
                     lift["Direction"] = "Going Down"
@@ -238,8 +257,8 @@ def simulate_tick():
                     lift["Current_Floor"] = next_fl
             elif cur_dir == "Going Down":
                 next_fl = cur_floor - step
-                if next_fl <= 0:
-                    lift["Current_Floor"] = 0
+                if next_fl <= min_fl:
+                    lift["Current_Floor"] = min_fl
                     lift["Direction"] = "Going Up"
                 else:
                     lift["Current_Floor"] = next_fl
@@ -249,7 +268,7 @@ def simulate_tick():
 
             lift["Passenger_Load_Percent"] = max(0, min(100, cur_load + random.randint(-12, 15)))
 
-        lift["Est_Wait_Sec"] = max(15, min(180, int(18 + abs(lift["Current_Floor"] - (max_fl // 2)) * 6 + (lift["Passenger_Load_Percent"] * 0.45) + random.randint(-3, 4))))
+        lift["Est_Wait_Sec"] = max(15, min(180, int(18 + abs(lift["Current_Floor"] - mid_fl) * 6 + (lift["Passenger_Load_Percent"] * 0.45) + random.randint(-3, 4))))
         lift["Energy_kWh"] = round(random.uniform(0.08, 0.32) * (1 + lift["Passenger_Load_Percent"] / 100), 2)
 
         if lift["Passenger_Load_Percent"] >= 85:
@@ -288,7 +307,7 @@ def simulate_tick():
 
 
 def trigger_fault(block, lift_id, fault_type):
-    """VIVA Demonstration helper to inject a fault into a specific elevator."""
+    """Demonstration helper to inject a fault into a specific elevator."""
     if "fleet" not in st.session_state:
         initialize_session()
     now_time = datetime.datetime.now().strftime("%H:%M:%S")

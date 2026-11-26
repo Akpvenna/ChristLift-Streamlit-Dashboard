@@ -49,6 +49,19 @@ def get_recent_logs(n=240):
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=30)
+def get_hourly_history():
+    """Loads full historical dataset for Busy Hour Analysis (08:00-20:00)."""
+    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 100:
+        try:
+            df = pd.read_csv(CSV_FILE, usecols=["Timestamp", "Block", "Passenger_Load_Percent"])
+            df["Passenger_Load_Percent"] = pd.to_numeric(df["Passenger_Load_Percent"], errors="coerce").fillna(0)
+            return df
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
 def _render_twin_body(selected_block):
     """Renders the Digital Twin layout without forcing a background timer."""
     fleet = st.session_state.get("fleet", [])
@@ -58,6 +71,7 @@ def _render_twin_body(selected_block):
     block_fleet_df = pd.DataFrame(block_fleet)
 
     recent_df = get_recent_logs(240)
+    history_df = get_hourly_history()
     max_floor = get_max_floor(selected_block)
     n_lifts = len(block_fleet_df)
 
@@ -102,7 +116,7 @@ def _render_twin_body(selected_block):
                     Live Telemetry Feed (CSV Appended)
                 </div>
                 <div style="font-size:11px; color:var(--text-color); opacity:0.7; margin-bottom:6px;">
-                    Updates every 10 seconds when Live Tick is active &bull; saved to lift_logs.csv
+                    Updates every 30 seconds when Live Tick is active &bull; saved to lift_logs.csv
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -113,7 +127,7 @@ def _render_twin_body(selected_block):
                 feed_df = recent_df
 
             if not feed_df.empty:
-                display_feed = feed_df[["Timestamp", "Lift_ID", "Current_Floor", "Direction", "Passenger_Load_Percent", "Operational_Status"]].tail(12).iloc[::-1].copy()
+                display_feed = feed_df[["Timestamp", "Lift_ID", "Current_Floor", "Direction", "Passenger_Load_Percent", "Operational_Status"]].tail(25).iloc[::-1].copy()
                 display_feed["Direction"] = display_feed["Direction"].apply(lambda d: f"▲ {d}" if "Up" in str(d) else (f"▼ {d}" if "Down" in str(d) else f"● {d}"))
                 display_feed["Passenger_Load_Percent"] = display_feed["Passenger_Load_Percent"].apply(lambda l: f"{int(l)}%")
 
@@ -128,7 +142,7 @@ def _render_twin_body(selected_block):
                         "Operational_Status": st.column_config.TextColumn("Status", width="medium")
                     },
                     hide_index=True,
-                    height=200,
+                    height=420,
                     **WIDTH_STRETCH
                 )
             else:
@@ -155,44 +169,43 @@ def _render_twin_body(selected_block):
 
         st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
 
-        r_sub1, r_sub2 = st.columns([1.0, 1.1])
+        # Stacked Vertically in Right Column for generous width & zero label clipping
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="font-size:14px; font-weight:600; color:var(--text-color);">
+                    Busy Hour Analysis
+                </div>
+                <div style="font-size:11px; color:var(--text-color); opacity:0.7;">
+                    Hourly campus demand distribution (08:00–20:00)
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            fig_busy = build_busy_hour_chart(history_df if not history_df.empty else recent_df, selected_block)
+            st.plotly_chart(fig_busy, **WIDTH_STRETCH, config=CHART_CONFIG)
 
-        with r_sub1:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="font-size:13px; font-weight:600; color:var(--text-color);">
-                        Busy Hour Analysis
-                    </div>
-                    <div style="font-size:10px; color:var(--text-color); opacity:0.7;">
-                        Peak capacity (08:00–20:00)
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                fig_busy = build_busy_hour_chart(recent_df, selected_block)
-                st.plotly_chart(fig_busy, **WIDTH_STRETCH, config=CHART_CONFIG)
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
 
-        with r_sub2:
-            with st.container(border=True):
-                st.markdown(
-                    f"""
-                    <div style="font-size:13px; font-weight:600; color:var(--text-color);">
-                        Lift Performance Radar
-                    </div>
-                    <div style="font-size:10px; color:var(--text-color); opacity:0.7;">
-                        Health, Load, Speed &amp; Coverage &bull; {selected_block}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                fig_radar = build_lift_performance_radar(block_fleet_df, selected_block)
-                st.plotly_chart(fig_radar, **WIDTH_STRETCH, config=CHART_CONFIG)
+        with st.container(border=True):
+            st.markdown(
+                f"""
+                <div style="font-size:14px; font-weight:600; color:var(--text-color);">
+                    Lift Performance Radar
+                </div>
+                <div style="font-size:11px; color:var(--text-color); opacity:0.7;">
+                    Health, Load, Speed &amp; Coverage &bull; {selected_block}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            fig_radar = build_lift_performance_radar(block_fleet_df, selected_block)
+            st.plotly_chart(fig_radar, **WIDTH_STRETCH, config=CHART_CONFIG)
 
 
-@st.fragment(run_every=10)
+@st.fragment(run_every=30)
 def render_live_twin_fragment(selected_block):
-    """Auto-refreshing 10-second fragment, only invoked when Live Tick is enabled."""
+    """Auto-refreshing 30-second fragment, only invoked when Live Tick is enabled."""
     if st.session_state.get("live_feed", True):
         simulate_tick()
     _render_twin_body(selected_block)
@@ -222,7 +235,7 @@ def render_digital_twin():
                 <span style="font-size:20px; font-weight:700; color:var(--text-color); letter-spacing:-0.02em;">Live Digital Twin</span>
             </div>
             <div style="font-size:12px; color:var(--text-color); opacity:0.7; margin-top:-2px;">
-                Real-time elevator shaft kinematics, performance radar, and 10s telemetry stream
+                Real-time elevator shaft kinematics, performance radar, and 30s telemetry stream
             </div>
             """,
             unsafe_allow_html=True
@@ -241,10 +254,10 @@ def render_digital_twin():
 
         with ctrl2:
             live_status = st.toggle(
-                "🟢 Live Tick (10s)",
+                "🟢 Live Tick (30s)",
                 key="twin_live_toggle",
                 on_change=_sync_twin_live,
-                help="Toggle 10-second auto-refresh simulation"
+                help="Toggle 30-second auto-refresh simulation"
             )
 
         with ctrl3:

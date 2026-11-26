@@ -58,7 +58,17 @@ def build_stacked_area_chart(df, view_mode="Trips"):
     if data.empty:
         return go.Figure()
 
-    resampled = data.groupby([pd.Grouper(key="Timestamp", freq="4h"), "Block"])["Passenger_Load_Percent"].count().reset_index()
+    span_hours = max(0.0, (data["Timestamp"].max() - data["Timestamp"].min()).total_seconds() / 3600.0)
+    if span_hours <= 2:
+        freq = "15min"
+    elif span_hours <= 12:
+        freq = "30min"
+    elif span_hours <= 48:
+        freq = "1h"
+    else:
+        freq = "4h"
+
+    resampled = data.groupby([pd.Grouper(key="Timestamp", freq=freq), "Block"])["Passenger_Load_Percent"].mean().reset_index()
     pivot_df = resampled.pivot(index="Timestamp", columns="Block", values="Passenger_Load_Percent").fillna(0)
 
     active_blocks = [b for b in ALL_BLOCKS if b in pivot_df.columns]
@@ -189,27 +199,46 @@ def build_weekday_hour_heatmap(df):
     hours_order = list(range(24))
 
     grouped = data.groupby(["Weekday", "Hour"])["Passenger_Load_Percent"].mean().reset_index()
-    heatmap_matrix = grouped.pivot(index="Weekday", columns="Hour", values="Passenger_Load_Percent").reindex(index=days_order, columns=hours_order).fillna(10)
+    heatmap_matrix = grouped.pivot(index="Weekday", columns="Hour", values="Passenger_Load_Percent").reindex(index=days_order, columns=hours_order).fillna(0)
+
+    try:
+        is_dark = (st.context.theme.type == "dark")
+    except Exception:
+        is_dark = False
+
+    if is_dark:
+        colorscale = [
+            [0.0, "#1E293B"],   # Idle / No Data (dark slate)
+            [0.25, "#0F766E"],  # Light (deep teal)
+            [0.50, "#0284C7"],  # Moderate (ocean blue)
+            [0.75, "#F59E0B"],  # Busy (amber)
+            [1.0, "#EF4444"],   # Peak / Overload (coral red)
+        ]
+    else:
+        colorscale = [
+            [0.0, "#F1F5F9"],   # Idle / No Data (soft slate)
+            [0.25, "#5EEAD4"],  # Light (mint teal)
+            [0.50, "#38BDF8"],  # Moderate (sky blue)
+            [0.75, "#F59E0B"],  # Busy (amber)
+            [1.0, "#EF4444"],   # Peak / Overload (coral red)
+        ]
 
     fig = go.Figure(go.Heatmap(
         z=heatmap_matrix.values,
         x=[f"{h:02d}:00" for h in hours_order],
         y=[d[:3] for d in days_order],
+        zmin=0,
+        zmax=100,
         xgap=3,
         ygap=3,
-        colorscale=[
-            [0.0, "#EEF2FF"],
-            [0.25, "#C7D2FE"],
-            [0.5, "#818CF8"],
-            [0.75, "#4F46E5"],
-            [1.0, "#312E81"]
-        ],
+        colorscale=colorscale,
         colorbar=dict(
             title="Load %",
             title_font=dict(size=9, color=COLOR_SLATE),
-            tickvals=[15, 85],
-            ticktext=["Fewer", "More"],
-            len=0.75,
+            tickvals=[10, 50, 90],
+            ticktext=["Low", "Mid", "Peak"],
+            tickfont=dict(size=8, color=COLOR_SLATE),
+            len=0.8,
             thickness=12
         ),
         hovertemplate="Day: <b>%{y}</b><br>Hour: <b>%{x}</b><br>Avg Load: <b>%{z:.1f}%</b><extra></extra>"
@@ -243,7 +272,9 @@ def build_floor_zone_donut(df):
         return go.Figure()
 
     def categorize_zone(floor):
-        if floor <= 2:
+        if floor < 0:
+            return "Basement (B1)"
+        elif floor <= 2:
             return "Ground–2nd Floor"
         elif floor <= 5:
             return "3rd–5th Floor"
@@ -302,9 +333,10 @@ def build_floor_zone_donut(df):
 # ==========================================
 # 2. PAGE 2 (LIVE DIGITAL TWIN) VISUALIZATIONS
 # ==========================================
-def build_elevator_shafts_chart(fleet_df, max_floor=10):
+def build_elevator_shafts_chart(fleet_df, max_floor=10, min_floor=0):
     """
-    Dynamic visual elevator shafts (0 to max_floor) adapting cleanly to 2, 4, or 10 lifts.
+    Dynamic visual elevator shafts (min_floor to max_floor, supporting Basement B1 = -1)
+    adapting cleanly to 2, 4, or 10 lifts.
     """
     fig = go.Figure()
     if fleet_df.empty:
@@ -321,7 +353,7 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
 
     for idx, row in fleet_df.reset_index(drop=True).iterrows():
         lift_id = str(row["Lift_ID"])
-        floor = min(max_floor, max(0, int(row["Current_Floor"])))
+        floor = min(max_floor, max(min_floor, int(row["Current_Floor"])))
         direction = str(row["Direction"])
         load = int(row["Passenger_Load_Percent"])
         status = str(row["Operational_Status"])
@@ -331,13 +363,13 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
         fig.add_shape(
             type="rect",
             x0=idx - shaft_half_w, x1=idx + shaft_half_w,
-            y0=-0.5, y1=max_floor + 0.5,
+            y0=min_floor - 0.5, y1=max_floor + 0.5,
             line=dict(color="rgba(100, 116, 139, 0.65)", width=1.8),
             fillcolor="rgba(148, 163, 184, 0.08)"
         )
 
-        # Floor divider lines (0 to max_floor)
-        for fl in range(max_floor + 1):
+        # Floor divider lines (min_floor to max_floor)
+        for fl in range(min_floor, max_floor + 1):
             fig.add_shape(
                 type="line",
                 x0=idx - shaft_half_w, x1=idx + shaft_half_w,
@@ -366,10 +398,11 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
 
         dir_symbol = "▲" if "Up" in direction else ("▼" if "Down" in direction else "●")
         dir_short = "Going Up" if "Up" in direction else ("Going Down" if "Down" in direction else "Idle")
-        ordinal = "Ground" if floor == 0 else f"F{floor}"
+        ordinal = "B1" if floor == -1 else ("Ground" if floor == 0 else f"F{floor}")
+        floor_short = "B1" if floor == -1 else ("G" if floor == 0 else str(floor))
 
         # Floor + Direction inside car
-        car_label = f"<b>{floor} {dir_symbol}</b>" if is_dense else f"<b>{floor}</b>"
+        car_label = f"<b>{floor_short} {dir_symbol}</b>"
         fig.add_annotation(
             x=idx, y=floor,
             text=car_label,
@@ -377,37 +410,14 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
             font=dict(color="#FFFFFF", size=10 if is_dense else 11, family=FONT_FAMILY)
         )
 
-        # Callout badge: compact above-car load tag when 10 lifts, full side callout when <= 4 lifts
-        if is_dense:
-            fig.add_annotation(
-                x=idx,
-                y=-0.85,
-                text=f"<b>{load}%</b>",
-                showarrow=False,
-                font=dict(color=car_color, size=9, family=FONT_FAMILY)
-            )
-        else:
-            badge_html = (
-                f"<span style='background-color:{car_color}; color:white; font-size:10px; font-weight:bold; padding:2px 5px; border-radius:3px;'>"
-                f"{ordinal} {dir_symbol} &bull; {dir_short}"
-                f"</span><br>"
-                f"<span style='font-size:9px; color:#334155; font-weight:600;'>"
-                f"Load: {load}% | Wait: {wait_sec}s"
-                f"</span>"
-            )
-            fig.add_annotation(
-                x=idx + shaft_half_w + 0.04,
-                y=floor,
-                text=badge_html,
-                showarrow=False,
-                align="left",
-                xanchor="left",
-                yanchor="middle",
-                bordercolor=car_color,
-                borderwidth=1.4,
-                borderpad=3,
-                bgcolor="rgba(255, 255, 255, 0.94)"
-            )
+        # Clean load % tag below every shaft (no white callout boxes; full details appear on hover)
+        fig.add_annotation(
+            x=idx,
+            y=min_floor - 0.85,
+            text=f"<b>{load}%</b>",
+            showarrow=False,
+            font=dict(color=car_color, size=9 if is_dense else 10, family=FONT_FAMILY)
+        )
 
         hover_x.append(idx)
         hover_y.append(floor)
@@ -429,15 +439,17 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
         showlegend=False
     ))
 
-    x_right = n_lifts - 0.3 if is_dense else n_lifts + 0.35
-    y_bottom = -1.25 if is_dense else -0.75
+    x_right = n_lifts - 0.3
+    y_bottom = min_floor - 1.25
+    floor_vals = list(range(min_floor, max_floor + 1))
+    floor_labels = ["B1" if i == -1 else ("Ground" if i == 0 else str(i)) for i in floor_vals]
 
     fig.update_layout(
         paper_bgcolor=BG_TRANSPARENT,
         plot_bgcolor=BG_TRANSPARENT,
         hoverlabel=HOVER_LABEL,
         transition=TRANSITION_CFG,
-        uirevision=f"shafts_{n_lifts}_{max_floor}",
+        uirevision=f"shafts_{n_lifts}_{min_floor}_{max_floor}",
         margin=dict(l=10, r=20, t=30, b=15),
         height=375,
         font=dict(family=FONT_FAMILY),
@@ -446,8 +458,8 @@ def build_elevator_shafts_chart(fleet_df, max_floor=10):
             title_font=dict(size=11, color=COLOR_SLATE),
             range=[y_bottom, max_floor + 0.75],
             tickmode="array",
-            tickvals=list(range(max_floor + 1)),
-            ticktext=["Ground"] + [str(i) for i in range(1, max_floor + 1)],
+            tickvals=floor_vals,
+            ticktext=floor_labels,
             tickfont=dict(size=10, color=COLOR_SLATE),
             showgrid=False,
             zeroline=False
@@ -502,7 +514,7 @@ def build_live_traffic_line_chart(logs_df, selected_block):
         transition=TRANSITION_CFG,
         uirevision=selected_block,
         margin=dict(l=10, r=10, t=15, b=10),
-        height=195,
+        height=240,
         font=dict(family=FONT_FAMILY),
         legend=dict(
             orientation="v",
@@ -563,7 +575,7 @@ def build_busy_hour_chart(logs_df, selected_block):
         transition=TRANSITION_CFG,
         barcornerradius=6,
         margin=dict(l=10, r=10, t=15, b=10),
-        height=230,
+        height=240,
         font=dict(family=FONT_FAMILY),
         yaxis=dict(
             title="Demand Load (%)",
@@ -575,8 +587,8 @@ def build_busy_hour_chart(logs_df, selected_block):
         xaxis=dict(
             title="Hour",
             title_font=dict(size=9, color=COLOR_SLATE),
-            tickvals=["08:00", "12:00", "16:00", "20:00"],
-            tickfont=dict(size=8, color=COLOR_SLATE),
+            tickvals=["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00"],
+            tickfont=dict(size=9, color=COLOR_SLATE),
             gridcolor=BG_TRANSPARENT
         )
     )
@@ -608,8 +620,10 @@ def build_lift_performance_radar(fleet_df, selected_block):
         load = int(row.get("Passenger_Load_Percent", 50))
         wait_sec = int(row.get("Est_Wait_Sec", 35))
         dispatch_speed = max(15, min(100, int(115 - wait_sec * 0.6)))
-        max_fl = max(1, int(row.get("Max_Floor", 10)))
-        coverage = max(20, min(100, int((int(row.get("Current_Floor", 1)) / max_fl) * 70 + 30)))
+        min_fl = int(row.get("Min_Floor", 0))
+        max_fl = max(min_fl + 1, int(row.get("Max_Floor", 10)))
+        cur_fl = int(row.get("Current_Floor", min_fl))
+        coverage = max(20, min(100, int(((cur_fl - min_fl) / (max_fl - min_fl)) * 70 + 30)))
 
         vals = [health, load, dispatch_speed, coverage, health]
         stroke, fill = palette[idx % len(palette)]
@@ -631,9 +645,9 @@ def build_lift_performance_radar(fleet_df, selected_block):
         hoverlabel=HOVER_LABEL,
         transition=TRANSITION_CFG,
         uirevision=f"radar_{selected_block}",
-        margin=dict(l=30, r=30, t=20, b=30),
-        height=230,
-        font=dict(family=FONT_FAMILY, size=9, color=COLOR_SLATE),
+        margin=dict(l=60, r=60, t=22, b=30),
+        height=240,
+        font=dict(family=FONT_FAMILY, size=10, color=COLOR_SLATE),
         polar=dict(
             bgcolor="rgba(148, 163, 184, 0.05)",
             radialaxis=dict(
@@ -707,7 +721,7 @@ def build_incident_breakdown_chart(incidents):
         transition=TRANSITION_CFG,
         barcornerradius=6,
         margin=dict(l=10, r=25, t=10, b=10),
-        height=240,
+        height=245,
         font=dict(family=FONT_FAMILY),
         xaxis=dict(
             title="Event Occurrences",

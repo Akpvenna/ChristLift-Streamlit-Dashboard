@@ -1,10 +1,10 @@
 """
-ChristLift - Page 3: Maintenance & Logs (Alerts, Diagnostics & VIVA Fault Simulator)
+ChristLift - Page 3: Maintenance & Logs (Alerts, Diagnostics & Fault Simulator)
 Features:
 - 4 Maintenance KPI metric cards
 - Filterable Live Incident & Maintenance Log (All / Critical / Warning / Info)
 - Incident Breakdown Chart
-- Interactive VIVA Fault Simulator Panel (Overload, Door Fault, Maintenance, Restore All)
+- Interactive Fault Simulator Panel (Overload, Door Fault, Maintenance, Restore All)
 - Searchable lift_logs.csv table explorer with CSV export
 """
 
@@ -46,7 +46,7 @@ def render_maintenance():
             <span style="font-size:20px; font-weight:700; color:var(--text-color); letter-spacing:-0.02em;">Maintenance &amp; Diagnostics</span>
         </div>
         <div style="font-size:12px; color:var(--text-color); opacity:0.7; margin-top:-2px;">
-            Hardware health diagnostics, incident logs, VIVA fault injection controls, and historical CSV telemetry
+            Hardware health diagnostics, incident logs, fault injection controls, and historical CSV telemetry
         </div>
         """,
         unsafe_allow_html=True
@@ -116,11 +116,11 @@ def render_maintenance():
     # ==========================================
     # 2. ROW 2: 2-COLUMN DIAGNOSTICS & ALERTS
     # ==========================================
-    diag_col1, diag_col2 = st.columns([1.3, 1.0])
+    diag_col1, diag_col2 = st.columns([1.0, 1.15])
 
     with diag_col1:
-        with st.container(border=True):
-            log_head1, log_head2 = st.columns([2.0, 1.2], vertical_alignment="center")
+        with st.container(border=True, height=350):
+            log_head1, log_head2 = st.columns([1.5, 1.3], vertical_alignment="center")
             with log_head1:
                 st.markdown(
                     """
@@ -158,48 +158,48 @@ def render_maintenance():
             ]
 
             if display_incidents:
-                st.markdown("<div style='max-height: 235px; overflow-y: auto; padding-right: 4px;'>", unsafe_allow_html=True)
-                for inc in display_incidents:
-                    sev = inc.get("severity", "Info")
-                    if sev == "Critical":
-                        badge_bg = "#FEE2E2"
-                        badge_color = "#991B1B"
-                        border_color = "#FCA5A5"
-                        icon = "🔴"
-                    elif sev == "Warning":
-                        badge_bg = "#FEF3C7"
-                        badge_color = "#92400E"
-                        border_color = "#FCD34D"
-                        icon = "⚠️"
-                    else:
-                        badge_bg = "#E0E7FF"
-                        badge_color = "#3730A3"
-                        border_color = "#C7D2FE"
-                        icon = "ℹ️"
+                with st.container(height=230, border=False):
+                    for inc in display_incidents:
+                        sev = inc.get("severity", "Info")
+                        if sev == "Critical":
+                            badge_bg = "#FEE2E2"
+                            badge_color = "#991B1B"
+                            border_color = "rgba(239, 68, 68, 0.5)"
+                            icon = "🔴"
+                        elif sev == "Warning":
+                            badge_bg = "#FEF3C7"
+                            badge_color = "#92400E"
+                            border_color = "rgba(245, 158, 11, 0.5)"
+                            icon = "⚠️"
+                        else:
+                            badge_bg = "#E0E7FF"
+                            badge_color = "#3730A3"
+                            border_color = "rgba(99, 102, 241, 0.45)"
+                            icon = "ℹ️"
 
-                    st.markdown(
-                        f"""
-                        <div style="display:flex; justify-content:space-between; align-items:center; background-color:#FFFFFF; border:1px solid {border_color}; border-radius:6px; padding:7px 10px; margin-bottom:5px; font-size:12px;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span>{icon}</span>
-                                <div>
-                                    <span style="font-weight:600; color:#0F172A;">[{inc.get('time')}] {inc.get('block')} &bull; {inc.get('lift')}:</span>
-                                    <span style="color:#475569; margin-left:4px;">{inc.get('msg')}</span>
+                        st.markdown(
+                            f"""
+                            <div style="display:flex; justify-content:space-between; align-items:center; background-color:#FFFFFF; border:1px solid {border_color}; border-radius:6px; padding:7px 10px; margin-bottom:5px; font-size:12px;">
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <span>{icon}</span>
+                                    <div>
+                                        <span style="font-weight:600; color:#0F172A;">[{inc.get('time')}] {inc.get('block')} &bull; {inc.get('lift')}:</span>
+                                        <span style="color:#475569; margin-left:4px;">{inc.get('msg')}</span>
+                                    </div>
                                 </div>
+                                <span style="background-color:{badge_bg}; color:{badge_color}; font-size:10px; font-weight:700; padding:2px 7px; border-radius:4px;">
+                                    {sev.upper()}
+                                </span>
                             </div>
-                            <span style="background-color:{badge_bg}; color:{badge_color}; font-size:10px; font-weight:700; padding:2px 7px; border-radius:4px;">
-                                {sev.upper()}
-                            </span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                st.markdown("</div>", unsafe_allow_html=True)
+                            """,
+                            unsafe_allow_html=True
+                        )
             else:
-                st.info(f"No incidents currently matching severity '{severity_filter}'.")
+                with st.container(height=230, border=False):
+                    st.info(f"No incidents currently matching severity '{severity_filter}'.")
 
     with diag_col2:
-        with st.container(border=True):
+        with st.container(border=True, height=350):
             st.markdown(
                 """
                 <div style="font-size:14px; font-weight:600; color:var(--text-color);">
@@ -217,17 +217,17 @@ def render_maintenance():
     st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
     # ==========================================
-    # 3. ROW 3: VIVA DEMO FAULT SIMULATOR & RAW CSV
+    # 3. ROW 3: INTERACTIVE FAULT SIMULATOR & RAW CSV
     # ==========================================
-    viva_col, csv_col = st.columns([1.1, 1.2])
+    sim_col, csv_col = st.columns([1.1, 1.2])
 
-    with viva_col:
+    with sim_col:
         with st.container(border=True):
             st.markdown(
                 """
                 <div style="display:flex; align-items:center; gap:6px;">
                     <span style="font-size:16px;">⚡</span>
-                    <span style="font-size:14px; font-weight:700; color:var(--text-color);">Interactive VIVA Fault Simulator</span>
+                    <span style="font-size:14px; font-weight:700; color:var(--text-color);">Interactive Fault Simulator</span>
                 </div>
                 <div style="font-size:11px; color:var(--text-color); opacity:0.7; margin-bottom:10px;">
                     Inject live operational anomalies into the Digital Twin to demonstrate real-time alert dispatch
@@ -238,9 +238,9 @@ def render_maintenance():
 
             v_c1, v_c2 = st.columns(2)
             with v_c1:
-                target_block = st.selectbox("Target Block", options=BLOCKS, key="viva_target_block")
+                target_block = st.selectbox("Target Block", options=BLOCKS, key="sim_target_block")
             with v_c2:
-                target_lift = st.selectbox("Target Lift", options=get_lifts_for_block(target_block), key="viva_target_lift")
+                target_lift = st.selectbox("Target Lift", options=get_lifts_for_block(target_block), key="sim_target_lift")
 
             btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
