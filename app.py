@@ -18,6 +18,38 @@ st.set_page_config(
 )
 
 # 2. Global Theme-Adaptive SaaS CSS Styling
+try:
+    _is_dark = (st.context.theme.type == "dark")
+except Exception:
+    _is_dark = False
+
+dark_palette_css = (
+    """
+        /* Consistent bluish-slate Dark Mode across local & Streamlit Cloud */
+        .stApp, [data-testid="stAppViewContainer"] {
+            background-color: #0E1117 !important;
+        }
+        header[data-testid="stHeader"] {
+            background-color: #0E1117 !important;
+        }
+        section[data-testid="stSidebar"] {
+            background-color: #1A1D29 !important;
+        }
+        div[data-testid="stMetric"],
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background-color: #131722 !important;
+        }
+    """
+    if _is_dark
+    else ""
+)
+
+if _is_dark:
+    st.markdown(
+        f"<style>{dark_palette_css}</style>",
+        unsafe_allow_html=True
+    )
+
 st.markdown(
     """
     <style>
